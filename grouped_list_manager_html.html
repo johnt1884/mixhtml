@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grouped List Manager</title>
+<style>
+body { font-family: Arial, sans-serif; padding: 20px; user-select: none; margin: 0; height: 100vh; display: flex; flex-direction: column; }
+.main-layout { display: flex; flex: 1; overflow: hidden; }
+#groups-container { flex: 1; padding: 20px; overflow-y: auto; }
+#preview-panel { width: 300px; border-left: 2px solid #ccc; padding: 20px; overflow-y: auto; background: #fff; position: relative; min-width: 100px; }
+#resizer { width: 5px; cursor: col-resize; background: #eee; border-left: 1px solid #ccc; border-right: 1px solid #ccc; }
+#resizer:hover { background: #ddd; }
+.group { border: 1px solid #ccc; padding: 10px; margin-bottom: 15px; background: #f9f9f9; position: relative; }
+.group-header { font-weight: bold; margin-bottom: 10px; cursor: grab; display:flex; align-items:center; gap:10px; }
+.item { padding: 5px; margin: 3px 0; background: #fff; border: 1px solid #ddd; cursor: grab; display: flex; justify-content: space-between; align-items: center; }
+.item.selected { background-color: #e0f0ff; border-color: #007bff; }
+.item-text { flex-grow: 1; }
+.delete-btn { color: #ff4d4d; cursor: pointer; font-weight: bold; margin-left: 10px; padding: 0 5px; }
+.delete-btn:hover { background: #fee; }
+button { cursor:pointer; padding: 5px 10px; margin-right: 5px; }
+.plus { font-weight:bold; font-size:18px; cursor:pointer; }
+
+/* Selection Box */
+#selection-box {
+    position: fixed;
+    border: 1px solid #007bff;
+    background: rgba(0, 123, 255, 0.2);
+    pointer-events: none;
+    display: none;
+    z-index: 1000;
+}
+
+/* Modal */
+.modal-overlay {
+    position: fixed;
+    top:0; left:0; width:100%; height:100%;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+.modal-content {
+    background: white;
+    padding: 20px;
+    border-radius: 5px;
+    width: 400px;
+    display: flex;
+    flex-direction: column;
+}
+.modal-content textarea {
+    height: 200px;
+    margin-bottom: 10px;
+}
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+</style>
+</head>
+<body oncontextmenu="return false;">
+
+<h2>Grouped List Manager</h2>
+
+<div style="margin-bottom: 20px;">
+    <input type="file" id="fileInput" style="display:none">
+    <button onclick="document.getElementById('fileInput').click()">Import TXT</button>
+    <button onclick="exportTxt()">Export TXT</button>
+    <button onclick="exportHtml()">Export HTML</button>
+    <button onclick="addCustomGroup()">Add Custom Group</button>
+    <button id="deleteSelectedBtn" onclick="deleteSelected()" style="display:none; color: white; background-color: #ff4d4d; border: none;">Delete Selected</button>
+</div>
+
+<div class="main-layout">
+    <div id="groups-container">
+        <div id="groups"></div>
+    </div>
+    <div id="resizer"></div>
+    <div id="preview-panel">
+        <h3>Preview</h3>
+        <div id="preview-content">Select an item to see preview</div>
+    </div>
+</div>
+
+<div id="selection-box"></div>
+
+<div id="pasteModal" class="modal-overlay">
+    <div class="modal-content">
+        <h3>Paste Items</h3>
+        <textarea id="pasteArea" placeholder="One item per line..."></textarea>
+        <div class="modal-actions">
+            <button onclick="closePasteModal()">Cancel</button>
+            <button onclick="submitPaste()">Add Items</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let items = [];
+let groups = [];
+let selectedIndices = new Set(); // Stores {gIndex, iIndex} as strings "g,i"
+let currentTargetGroupIndex = null;
+
+function updatePreview() {
+    const previewContent = document.getElementById('preview-content');
+    if (selectedIndices.size === 0) {
+        previewContent.innerHTML = 'Select an item to see preview';
+        return;
+    }
+
+    // Get the first selected item for preview (most relevant)
+    const sortedSelection = Array.from(selectedIndices).map(s => {
+        const [g, i] = s.split(',').map(Number);
+        return {g, i, val: groups[g].items[i]};
+    }).sort((a,b) => a.g - b.g || a.i - b.i);
+
+    const firstItem = sortedSelection[0];
+    const itemValue = firstItem.val;
+
+    if (!itemValue) return;
+
+    // Check for TikTok URL pattern - more robust extraction
+    const tiktokMatch = itemValue.match(/tiktok\.com\/(@?[^\/?#\s]+)/i);
+    if (tiktokMatch) {
+        let username = tiktokMatch[1];
+        if (username.startsWith('@')) username = username.substring(1);
+        
+        previewContent.innerHTML = `<div><strong>Username:</strong> ${username}</div><div id="img-container">Searching for image...</div>`;
+        
+        const imgContainer = document.getElementById('img-container');
+        const extensions = ['.jpg', '.jpeg', '.png', '.webp'];
+        const variants = [username, username.toLowerCase(), username.toUpperCase()];
+        const sources = [];
+        
+        variants.forEach(v => {
+            extensions.forEach(ext => {
+                sources.push(v + ext);
+            });
+        });
+
+        let found = false;
+        const tryLoad = (idx) => {
+            if (idx >= sources.length) {
+                if (!found) imgContainer.innerHTML = 'No image found for ' + username;
+                return;
+            }
+
+            const img = new Image();
+            img.onload = () => {
+                found = true;
+                imgContainer.innerHTML = '';
+                img.style.maxWidth = '100%';
+                imgContainer.appendChild(img);
+            };
+            img.onerror = () => tryLoad(idx + 1);
+            img.src = sources[idx];
+        };
+
+        tryLoad(0);
+    } else {
+        previewContent.innerHTML = `<div><strong>Item:</strong> ${itemValue}</div><div>Not a recognized TikTok URL</div>`;
+    }
+}
+
+// Resizer Logic
+const resizer = document.getElementById('resizer');
+const previewPanel = document.getElementById('preview-panel');
+let isResizing = false;
+
+resizer.addEventListener('mousedown', e => {
+    isResizing = true;
+    document.body.style.cursor = 'col-resize';
+});
+
+document.addEventListener('mousemove', e => {
+    if (isResizing) {
+        const width = window.innerWidth - e.clientX;
+        if (width > 50 && width < window.innerWidth - 100) {
+            previewPanel.style.width = width + 'px';
+        }
+    }
+});
+
+document.addEventListener('mouseup', () => {
+    isResizing = false;
+    document.body.style.cursor = 'default';
+});
+
+// Marquee Selection state
+let isSelecting = false;
+let startX, startY;
+const selectionBox = document.getElementById('selection-box');
+
+document.addEventListener('mousedown', e => {
+    // If modal is open, don't do selection logic
+    if (document.getElementById('pasteModal').style.display === 'flex') return;
+
+    // Detect what we clicked on
+    const item = e.target.closest('.item');
+    const header = e.target.closest('.group-header');
+    const plus = e.target.closest('.plus');
+    const btn = e.target.closest('button');
+
+    // If clicking on an item, handle individual selection
+    if (item && e.button === 0) {
+        const key = `${item.dataset.gindex},${item.dataset.iindex}`;
+        if (e.ctrlKey || e.shiftKey) {
+            if (selectedIndices.has(key)) selectedIndices.delete(key);
+            else selectedIndices.add(key);
+        } else {
+            if (!selectedIndices.has(key)) {
+                selectedIndices.clear();
+                selectedIndices.add(key);
+            }
+        }
+        render();
+        updatePreview();
+        return;
+    }
+
+    // If clicking on header/buttons, let standard behavior (drag/click) happen
+    if (header || plus || btn) return;
+
+    // Only start marquee selection if it's from the left margin (first 100px)
+    if (e.clientX < 100 && e.button === 0) {
+        e.preventDefault();
+        isSelecting = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        selectionBox.style.left = startX + 'px';
+        selectionBox.style.top = startY + 'px';
+        selectionBox.style.width = '0px';
+        selectionBox.style.height = '0px';
+        selectionBox.style.display = 'block';
+        
+        // Clear selection unless Shift key is held (optional)
+        if (!e.shiftKey) {
+            selectedIndices.clear();
+            render();
+        }
+    }
+});
+
+document.addEventListener('mousemove', e => {
+    if (!isSelecting) return;
+    
+    const curX = e.clientX;
+    const curY = e.clientY;
+    
+    const x = Math.min(startX, curX);
+    const y = Math.min(startY, curY);
+    const width = Math.abs(curX - startX);
+    const height = Math.abs(curY - startY);
+    
+    selectionBox.style.left = x + 'px';
+    selectionBox.style.top = y + 'px';
+    selectionBox.style.width = width + 'px';
+    selectionBox.style.height = height + 'px';
+    
+    updateSelection(x, y, width, height);
+}, { passive: false });
+
+document.addEventListener('mouseup', () => {
+    if (!isSelecting) return;
+    isSelecting = false;
+    selectionBox.style.display = 'none';
+});
+
+document.addEventListener('keydown', e => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIndices.size > 0) {
+        if (document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'INPUT') {
+            deleteSelected();
+        }
+    }
+});
+
+function updateSelection(bx, by, bw, bh) {
+    const itemDivs = document.querySelectorAll('.item');
+    let changed = false;
+    
+    itemDivs.forEach(div => {
+        const rect = div.getBoundingClientRect();
+        const g = div.dataset.gindex;
+        const i = div.dataset.iindex;
+        const key = `${g},${i}`;
+        
+        // Check intersection
+        const intersects = !(rect.left > bx + bw || 
+                             rect.right < bx || 
+                             rect.top > by + bh || 
+                             rect.bottom < by);
+        
+        const isSelected = selectedIndices.has(key);
+        if (intersects && !isSelected) {
+            selectedIndices.add(key);
+            div.classList.add('selected');
+            changed = true;
+        } else if (!intersects && isSelected) {
+            selectedIndices.delete(key);
+            div.classList.remove('selected');
+            changed = true;
+        }
+    });
+    
+    if (changed) {
+        document.getElementById('deleteSelectedBtn').style.display = selectedIndices.size > 0 ? 'inline-block' : 'none';
+        updatePreview();
+    }
+}
+
+function loadFile(file, targetGroupIndex=null) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const rawItems = e.target.result.split(/\r?\n/).filter(x => x.trim());
+        const newItems = rawItems.filter(item => !/^Group \d{2}$/i.test(item));
+        
+        if (targetGroupIndex === null) {
+            items.push(...newItems);
+            rebuildGroups();
+        } else {
+            insertIntoGroup(targetGroupIndex, newItems);
+        }
+    };
+    reader.readAsText(file);
+}
+
+document.getElementById('fileInput').addEventListener('change', function(e) {
+    loadFile(e.target.files[0]);
+});
+
+function rebuildGroups() {
+    groups = [];
+    let count = 1;
+    for (let i = 0; i < items.length; i += 6) {
+        groups.push({ name: 'Group ' + String(count).padStart(2,'0'), items: items.slice(i, i+6), isCustom: false });
+        count++;
+    }
+    render();
+}
+
+function renumberGroups() {
+    let count = 1;
+    groups.forEach(g => {
+        if (!g.isCustom) {
+            g.name = 'Group ' + String(count).padStart(2,'0');
+            count++;
+        }
+    });
+}
+
+function insertIntoGroup(gIndex, newItems) {
+    groups[gIndex].items.push(...newItems);
+    rebalanceAll();
+}
+
+function rebalanceAll() {
+    // Collect all items from non-custom groups into a pool
+    let standardPool = [];
+    
+    // Find all standard groups and collect their items
+    for (let i = 0; i < groups.length; i++) {
+        if (!groups[i].isCustom) {
+            standardPool.push(...groups[i].items);
+            groups[i].items = []; // Clear for refilling
+        }
+    }
+
+    // Refill standard groups
+    let poolPtr = 0;
+    let lastStandardIdx = -1;
+
+    for (let i = 0; i < groups.length; i++) {
+        if (!groups[i].isCustom) {
+            groups[i].items = standardPool.slice(poolPtr, poolPtr + 6);
+            poolPtr += 6;
+            lastStandardIdx = i;
+        }
+    }
+
+    // Remove empty standard groups (except maybe the last one if we want to keep at least one?)
+    groups = groups.filter((g, idx) => g.isCustom || g.items.length > 0 || idx === lastStandardIdx);
+
+    // If there are still items in the pool, add more standard groups
+    let standardGroupCount = 1;
+    // (We'll renumber later anyway)
+
+    while (poolPtr < standardPool.length) {
+        groups.push({
+            name: 'TEMP', // will be renumbered
+            items: standardPool.slice(poolPtr, poolPtr + 6),
+            isCustom: false
+        });
+        poolPtr += 6;
+    }
+    
+    renumberGroups();
+    selectedIndices.clear();
+    render();
+    updatePreview();
+}
+
+function addCustomGroup() {
+    const name = prompt("Enter group heading:");
+    if (name) {
+        groups.push({ name: name, items: [], isCustom: true });
+        render();
+    }
+}
+
+function deleteItem(gIndex, iIndex) {
+    groups[gIndex].items.splice(iIndex, 1);
+    rebalanceAll();
+}
+
+function deleteSelected() {
+    if (selectedIndices.size === 0) return;
+    
+    // Convert set to array of objects, sort descending to splice without index shift issues
+    const toDelete = Array.from(selectedIndices).map(s => {
+        const [g, i] = s.split(',').map(Number);
+        return {g, i};
+    });
+    
+    // We need to delete from the end of the flattened list to be safe, 
+    // or just rebalance after removing them from the respective groups.
+    // Easier: just remove them from their groups and rebalance.
+    
+    // Sort by group index then item index, both descending
+    toDelete.sort((a, b) => b.g - a.g || b.i - a.i);
+    
+    toDelete.forEach(d => {
+        groups[d.g].items.splice(d.i, 1);
+    });
+    
+    selectedIndices.clear();
+    rebalanceAll();
+    updatePreview();
+}
+
+function openPasteModal(gIndex) {
+    currentTargetGroupIndex = gIndex;
+    document.getElementById('pasteArea').value = '';
+    document.getElementById('pasteModal').style.display = 'flex';
+    document.getElementById('pasteArea').focus();
+}
+
+function closePasteModal() {
+    document.getElementById('pasteModal').style.display = 'none';
+}
+
+function submitPaste() {
+    const text = document.getElementById('pasteArea').value;
+    if (text) {
+        const rawItems = text.split(/\n/).filter(x => x.trim());
+        const newItems = rawItems.filter(item => !/^Group \d{2}$/i.test(item));
+
+        if (currentTargetGroupIndex === null) {
+            items.push(...newItems);
+            rebuildGroups();
+        } else {
+            insertIntoGroup(currentTargetGroupIndex, newItems);
+        }
+    }
+    closePasteModal();
+}
+
+function render() {
+    const container = document.getElementById('groups');
+    container.innerHTML = '';
+
+    groups.forEach((group, gIndex) => {
+        const gDiv = document.createElement('div');
+        gDiv.className = 'group';
+        gDiv.draggable = true;
+        gDiv.ondragstart = e => {
+            e.dataTransfer.setData('group', gIndex);
+        };
+        gDiv.ondragover = e => {
+            e.preventDefault();
+            gDiv.style.background = '#eef';
+        };
+        gDiv.ondragleave = e => {
+            gDiv.style.background = '#f9f9f9';
+        };
+        gDiv.ondrop = e => {
+            gDiv.style.background = '#f9f9f9';
+            const groupFrom = e.dataTransfer.getData('group');
+            const itemData = e.dataTransfer.getData('item');
+            const multiData = e.dataTransfer.getData('items-multi');
+
+            if (groupFrom !== '') {
+                const from = parseInt(groupFrom);
+                const moved = groups.splice(from,1)[0];
+                groups.splice(gIndex,0,moved);
+                renumberGroups();
+                render();
+            } else if (multiData) {
+                const itemsToMove = JSON.parse(multiData);
+                // Sort to keep original relative order
+                itemsToMove.sort((a,b) => a.g - b.g || a.i - b.i);
+                const values = itemsToMove.map(m => m.val);
+                
+                // Remove (descending)
+                const itemsToRemove = [...itemsToMove].sort((a,b) => b.g - a.g || b.i - a.i);
+                itemsToRemove.forEach(m => groups[m.g].items.splice(m.i, 1));
+
+                groups[gIndex].items.push(...values);
+                rebalanceAll();
+            } else if (itemData) {
+                const {gIndex: fromG, iIndex: fromI} = JSON.parse(itemData);
+                const moved = groups[fromG].items.splice(fromI, 1)[0];
+                groups[gIndex].items.push(moved);
+                rebalanceAll();
+            }
+        };
+
+        const header = document.createElement('div');
+        header.className = 'group-header';
+
+        const plus = document.createElement('span');
+        plus.className = 'plus';
+        plus.textContent = '+';
+
+        plus.onclick = () => {
+            openPasteModal(gIndex);
+        };
+
+        const title = document.createElement('span');
+        title.textContent = group.name;
+        header.appendChild(plus);
+        header.appendChild(title);
+        gDiv.appendChild(header);
+
+        group.items.forEach((item, iIndex) => {
+            const div = document.createElement('div');
+            div.className = 'item';
+            if (selectedIndices.has(`${gIndex},${iIndex}`)) {
+                div.classList.add('selected');
+            }
+            div.draggable = true;
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'item-text';
+            textSpan.textContent = item;
+            div.appendChild(textSpan);
+
+            const delBtn = document.createElement('span');
+            delBtn.className = 'delete-btn';
+            delBtn.textContent = '×';
+            delBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteItem(gIndex, iIndex);
+            };
+            div.appendChild(delBtn);
+
+            div.dataset.gindex = gIndex;
+            div.dataset.iindex = iIndex;
+
+            div.ondragstart = e => {
+                e.stopPropagation();
+                
+                let dragItems = [];
+                if (selectedIndices.has(`${gIndex},${iIndex}`)) {
+                    // Moving all selected items
+                    const sortedSelected = Array.from(selectedIndices).map(s => {
+                        const [g, i] = s.split(',').map(Number);
+                        return {g, i, val: groups[g].items[i]};
+                    });
+                    // We should probably preserve some order, but rebalance will squash them anyway.
+                    // Just send the list of what to move.
+                    dragItems = sortedSelected;
+                } else {
+                    // Dragging just this one
+                    dragItems = [{g: gIndex, i: iIndex, val: groups[gIndex].items[iIndex]}];
+                }
+                
+                e.dataTransfer.setData('items-multi', JSON.stringify(dragItems));
+                // fallback for single item logic if needed, but we'll upgrade drop to handle multi
+                e.dataTransfer.setData('item', JSON.stringify({gIndex, iIndex}));
+            };
+
+            div.ondragover = e => {
+                e.preventDefault();
+                e.stopPropagation();
+                const rect = div.getBoundingClientRect();
+                const relY = e.clientY - rect.top;
+                if (relY < rect.height / 2) {
+                    div.style.borderTop = '2px solid blue';
+                    div.style.borderBottom = '1px solid #ddd';
+                } else {
+                    div.style.borderTop = '1px solid #ddd';
+                    div.style.borderBottom = '2px solid blue';
+                }
+            };
+
+            div.ondragleave = e => {
+                div.style.borderTop = '1px solid #ddd';
+                div.style.borderBottom = '1px solid #ddd';
+            };
+
+            div.ondrop = e => {
+                e.stopPropagation();
+                div.style.borderTop = '1px solid #ddd';
+                div.style.borderBottom = '1px solid #ddd';
+                
+                const multiData = e.dataTransfer.getData('items-multi');
+                if (multiData) {
+                    const itemsToMove = JSON.parse(multiData);
+                    // Crucial: preserve document order during move
+                    itemsToMove.sort((a,b) => a.g - b.g || a.i - b.i);
+                    const values = itemsToMove.map(m => m.val);
+
+                    // Remove items from groups (descending to avoid index shift)
+                    const itemsToRemove = [...itemsToMove].sort((a,b) => b.g - a.g || b.i - a.i);
+                    itemsToRemove.forEach(m => groups[m.g].items.splice(m.i, 1));
+                    
+                    // Find where to insert
+                    const rect = div.getBoundingClientRect();
+                    const relY = e.clientY - rect.top;
+                    let insertAfter = relY >= rect.height / 2;
+                    
+                    // The iIndex might have shifted if we removed items from the SAME group before this item.
+                    // Let's find the current iIndex of the item we dropped on.
+                    // We'll use its unique reference if we can, or just find it in the current groups[gIndex].
+                    // (Actually, a safer way is to just use its value if unique, but let's be careful).
+                    
+                    // We'll re-calculate iIndex for the target item.
+                    // However, we can just find its index in the group it's currently in.
+                    let currentTargetGroup = groups[gIndex];
+                    let currentTargetIdx = currentTargetGroup.items.indexOf(item); // Note: 'item' is the value
+                    if (currentTargetIdx === -1) {
+                        // If multiple items have same name, we are in trouble with indexOf.
+                        // Let's use the fact that we have its ORIGINAL gIndex and iIndex from the loop context.
+                        // Since we spliced from end of all groups, the only things that changed are indices
+                        // in groups where items were removed.
+                        
+                        // Count how many items were removed from gIndex at a position <= iIndex.
+                        let countBefore = 0;
+                        itemsToMove.forEach(m => {
+                            if (m.g === gIndex && m.i < iIndex) countBefore++;
+                        });
+                        currentTargetIdx = iIndex - countBefore;
+                    }
+
+                    if (insertAfter) currentTargetIdx++;
+                    groups[gIndex].items.splice(currentTargetIdx, 0, ...values);
+                    
+                    selectedIndices.clear();
+                    rebalanceAll();
+                }
+            };
+
+            gDiv.appendChild(div);
+        });
+
+        container.appendChild(gDiv);
+    });
+    
+    document.getElementById('deleteSelectedBtn').style.display = selectedIndices.size > 0 ? 'inline-block' : 'none';
+}
+
+function exportTxt() {
+    let output = '';
+    groups.forEach(g => {
+        output += g.name + '\n';
+        g.items.forEach(i => output += i + '\n');
+        output += '\n';
+    });
+
+    const blob = new Blob([output], {type: 'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'output.txt';
+    a.click();
+}
+
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+function exportHtml() {
+    let html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Link Groups</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
+        h3 { border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 30px; display: flex; align-items: center; gap: 15px; }
+        ul { list-style-type: none; padding-left: 0; }
+        li { margin-bottom: 5px; }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        button { cursor: pointer; padding: 5px 10px; }
+    </style>
+    <script>
+        function openGroup(links) {
+            if (!links || links.length === 0) return;
+            
+            links.forEach(function(url, i) {
+                setTimeout(function() {
+                    var a = document.createElement('a');
+                    a.href = url;
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                }, i * 800); // increased delay to 800ms
+            });
+        }
+    <\/script>
+</head>
+<body>
+    <h2>Link Groups Export</h2>
+`;
+
+    groups.forEach(group => {
+        const escapedGroupName = escapeHtml(group.name);
+        const links = group.items.filter(i => i.startsWith('http'));
+        const jsArray = JSON.stringify(links).replace(/'/g, "&apos;");
+
+        html += `    <h3>${escapedGroupName} <button onclick='openGroup(${jsArray})'>Open All</button></h3>\n`;
+        html += `    <ul>\n`;
+
+        group.items.forEach(link => {
+            const escaped = escapeHtml(link);
+            if (link.startsWith('http')) {
+                html += `        <li><a href="${escaped}" target="_blank">${escaped}</a></li>\n`;
+            } else {
+                html += `        <li>${escaped}</li>\n`;
+            }
+        });
+
+        html += `    </ul>\n`;
+    });
+
+    html += `</body>\n</html>`;
+
+    const blob = new Blob([html], {type: 'text/html'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'output.html';
+    a.click();
+}
+</script>
+
+</body>
+</html>
