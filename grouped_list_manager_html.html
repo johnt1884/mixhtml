@@ -70,6 +70,8 @@ button { cursor:pointer; padding: 5px 10px; margin-right: 5px; }
     <button onclick="exportHtml()">Export HTML</button>
     <button onclick="addCustomGroup()">Add Custom Group</button>
     <button id="deleteSelectedBtn" onclick="deleteSelected()" style="display:none; color: white; background-color: #ff4d4d; border: none;">Delete Selected</button>
+    <label for="groupLimitInput" style="margin-left: 20px;">Group Limit:</label>
+    <input type="number" id="groupLimitInput" value="6" min="1" style="width: 50px;" onchange="updateGroupLimit()">
 </div>
 
 <div class="main-layout">
@@ -101,6 +103,18 @@ let items = [];
 let groups = [];
 let selectedIndices = new Set(); // Stores {gIndex, iIndex} as strings "g,i"
 let currentTargetGroupIndex = null;
+let groupLimit = 6;
+
+function updateGroupLimit() {
+    const input = document.getElementById('groupLimitInput');
+    let val = parseInt(input.value);
+    if (isNaN(val) || val < 1) {
+        val = 6;
+        input.value = 6;
+    }
+    groupLimit = val;
+    rebalanceAll();
+}
 
 function updatePreview() {
     const previewContent = document.getElementById('preview-content');
@@ -332,8 +346,8 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
 function rebuildGroups() {
     groups = [];
     let count = 1;
-    for (let i = 0; i < items.length; i += 6) {
-        groups.push({ name: 'Group ' + String(count).padStart(2,'0'), items: items.slice(i, i+6), isCustom: false });
+    for (let i = 0; i < items.length; i += groupLimit) {
+        groups.push({ name: 'Group ' + String(count).padStart(2,'0'), items: items.slice(i, i+groupLimit), isCustom: false });
         count++;
     }
     render();
@@ -372,8 +386,8 @@ function rebalanceAll() {
 
     for (let i = 0; i < groups.length; i++) {
         if (!groups[i].isCustom) {
-            groups[i].items = standardPool.slice(poolPtr, poolPtr + 6);
-            poolPtr += 6;
+            groups[i].items = standardPool.slice(poolPtr, poolPtr + groupLimit);
+            poolPtr += groupLimit;
             lastStandardIdx = i;
         }
     }
@@ -388,10 +402,10 @@ function rebalanceAll() {
     while (poolPtr < standardPool.length) {
         groups.push({
             name: 'TEMP', // will be renumbered
-            items: standardPool.slice(poolPtr, poolPtr + 6),
+            items: standardPool.slice(poolPtr, poolPtr + groupLimit),
             isCustom: false
         });
-        poolPtr += 6;
+        poolPtr += groupLimit;
     }
     
     renumberGroups();
