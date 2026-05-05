@@ -171,6 +171,8 @@
             align-items: stretch;
             position: relative;
             padding: 10px 20px;
+            justify-content: center;
+            gap: 10px;
         }
         .row-action-bar {
             display: flex;
@@ -221,8 +223,11 @@
             opacity: 1;
             text-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
         }
-        .main-container.show-numbers .thumbnails-container {
-            padding-left: 40px;
+        .main-container.show-numbers .thumbnails-container,
+        .main-container.show-numbers .project-header,
+        .main-container.show-numbers .row-action-bar {
+            padding-left: 50px;
+            padding-right: 50px;
         }
         .thumbnail.selected-root-sc {
             outline: 3px dashed var(--root-sc-color);
@@ -361,7 +366,7 @@
             display: block;
         }
         .main-container.show-numbers .date-info {
-            padding-left: 40px;
+            padding-left: 50px;
         }
         .checkbox-container {
             display: flex;
@@ -378,8 +383,8 @@
             font-weight: bold;
             color: var(--row-number-color);
             position: absolute;
-            left: 0;
-            top: 0;
+            left: 10px;
+            top: 10px;
             width: 30px;
             text-align: right;
         }
@@ -598,7 +603,7 @@
                         </div>
                     </div>
                     <select id="size-selector">
-                        <option value="auto" selected>Auto Fit</option>
+                        <option value="auto">Auto Fit</option>
                         <option value="0.2">20%</option>
                         <option value="0.3">30%</option>
                         <option value="0.4">40%</option>
@@ -607,8 +612,10 @@
                         <option value="0.7">70%</option>
                         <option value="0.8">80%</option>
                         <option value="0.9">90%</option>
-                        <option value="1">100%</option>
+                        <option value="1" selected>100%</option>
+                        <option value="custom">Custom</option>
                     </select>
+                    <input type="number" id="custom-size-input" style="display:none; width: 60px; height: 28px; background-color: var(--toolbar-color); color: white; border: 1px solid #444444; margin-left: 5px; text-align: center;" placeholder="%" min="1" max="500">
                     <select id="sort-selector">
                         <option value="" disabled selected hidden>Sort</option>
                         <option value="name-asc">Name (A-Z)</option>
@@ -742,6 +749,7 @@
         const copyScriptBtn = document.getElementById('copy-script-btn');
         const downloadScriptLink = document.getElementById('download-script-link');
         const sizeSelector = document.getElementById('size-selector');
+        const customSizeInput = document.getElementById('custom-size-input');
         const sortSelector = document.getElementById('sort-selector');
         const loadButton = document.getElementById('load-directory-btn');
         const loadScButton = document.getElementById('load-sc-btn');
@@ -1431,7 +1439,20 @@
                 scriptModal.style.display = 'block';
             });
 
-            sizeSelector.addEventListener('change', () => layoutLandscapeThumbnails());
+            sizeSelector.addEventListener('change', () => {
+                if (sizeSelector.value === 'custom') {
+                    customSizeInput.style.display = 'inline-block';
+                    if (!customSizeInput.value) customSizeInput.value = 100;
+                } else {
+                    customSizeInput.style.display = 'none';
+                }
+                saveCurrentSizeForProject();
+                layoutLandscapeThumbnails();
+            });
+            customSizeInput.addEventListener('input', () => {
+                saveCurrentSizeForProject();
+                layoutLandscapeThumbnails();
+            });
             window.addEventListener('resize', debouncedLayout);
             
             sortSelector.addEventListener('change', (e) => {
@@ -1643,6 +1664,18 @@
             player.play();
         }
 
+        function saveCurrentSizeForProject() {
+            if (!canvases.has(activeCanvasId)) return;
+            const canvas = canvases.get(activeCanvasId);
+            if (canvas.path !== undefined) {
+                const config = {
+                    size: sizeSelector.value,
+                    custom: sizeSelector.value === 'custom' ? customSizeInput.value : null
+                };
+                localStorage.setItem(`proj-size-${canvas.path}`, JSON.stringify(config));
+            }
+        }
+
         function renderCanvas(canvasId) {
             if (!canvases.has(canvasId)) return;
 
@@ -1654,6 +1687,25 @@
                 canvas.elements.forEach(el => {
                     thumbnailContainer.appendChild(el);
                 });
+            }
+
+            // Load saved size for this project
+            if (canvas.path !== undefined) {
+                const saved = localStorage.getItem(`proj-size-${canvas.path}`);
+                if (saved) {
+                    const config = JSON.parse(saved);
+                    sizeSelector.value = config.size;
+                    if (config.size === 'custom') {
+                        customSizeInput.style.display = 'inline-block';
+                        customSizeInput.value = config.custom;
+                    } else {
+                        customSizeInput.style.display = 'none';
+                    }
+                } else {
+                    // Default for projects not yet customized
+                    sizeSelector.value = "1";
+                    customSizeInput.style.display = 'none';
+                }
             }
 
             populateCanvasDropdown();
@@ -1961,10 +2013,17 @@
         function layoutLandscapeThumbnails() {
             const elements = document.querySelectorAll('.landscape-row, .project-header, hr');
             const showNumbers = showNumbersCheckbox.checked;
-            const paddingLeft = showNumbers ? 40 : 20;
+            const paddingLR = showNumbers ? 50 : 20;
             const containerWidth = window.innerWidth;
             const isAuto = sizeSelector.value === 'auto';
-            let globalScale = isAuto ? 1.0 : parseFloat(sizeSelector.value);
+            const isCustom = sizeSelector.value === 'custom';
+            let globalScale = 1.0;
+
+            if (isCustom) {
+                globalScale = (parseFloat(customSizeInput.value) || 100) / 100;
+            } else if (!isAuto) {
+                globalScale = parseFloat(sizeSelector.value);
+            }
 
             if (isAuto) {
                 const firstThumb = document.querySelector('.thumbnail[data-original-width]');
@@ -1976,7 +2035,7 @@
                 // Available width for content inside thumbnails-container
                 // Thumbnails are inside landscape-row which is 100% width.
                 // thumbnails-container has padding: 10px 20px
-                const availableW = containerWidth - 40 - 10; 
+                const availableW = containerWidth - (paddingLR * 2) - 10;
                 
                 // Target: 10 items per row, but min 210px each.
                 let numToFit = 10;
