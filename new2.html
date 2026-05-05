@@ -110,6 +110,7 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             max-height: 90vh;
             overflow: auto;
+            color: black;
         }
         .close {
             color: #606770;
@@ -684,6 +685,27 @@
         </div>
     </div>
 
+    <div id="categories-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" id="close-categories-modal">&times;</span>
+            <h2>Categories</h2>
+            <div id="categories-list" style="margin-bottom: 20px; max-height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
+                <!-- Category checkboxes will go here -->
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+                <input type="text" id="new-category-input" placeholder="New Category Name" style="flex-grow: 1; padding: 5px;">
+                <button id="add-category-btn" class="bar-button" style="background-color: #43a047;">Create & Add</button>
+            </div>
+            <div id="global-categories-container" style="display: none; align-items: center; gap: 10px;">
+                <label for="global-categories-dropdown">Saved Categories:</label>
+                <select id="global-categories-dropdown" style="flex-grow: 1; color: black; background-color: white; border: 1px solid #ccc;">
+                    <option value="">Select a saved category...</option>
+                </select>
+                <button id="add-global-category-btn" class="bar-button">Add</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const thumbnailContainer = document.getElementById('thumbnail-container');
         const scriptModal = document.getElementById('script-modal');
@@ -736,6 +758,14 @@
         const editorRotRightBtn = document.getElementById('editor-rotRight');
         const editorVideoOverlay = document.getElementById('editor-videoOverlay');
         const editorFileInfo = document.getElementById('editor-fileInfo');
+        const categoriesModal = document.getElementById('categories-modal');
+        const closeCategoriesModal = document.getElementById('close-categories-modal');
+        const categoriesList = document.getElementById('categories-list');
+        const newCategoryInput = document.getElementById('new-category-input');
+        const addCategoryBtn = document.getElementById('add-category-btn');
+        const globalCategoriesContainer = document.getElementById('global-categories-container');
+        const globalCategoriesDropdown = document.getElementById('global-categories-dropdown');
+        const addGlobalCategoryBtn = document.getElementById('add-global-category-btn');
 
         const prevCanvasBtn = document.getElementById('prev-canvas-btn');
         const nextCanvasBtn = document.getElementById('next-canvas-btn');
@@ -775,6 +805,11 @@
         let editorMediaFrameCount = 0;
         let editorScrubbingMouseDown = false;
         let editorCurrentAppliedRotation = 0;
+
+        let videoCategories = new Map(); // Key: projectPath + '|' + videoName, Value: Set of category names
+        let projectCategories = new Map(); // Key: projectPath, Value: Set of category names
+        let globalSavedCategories = new Set(JSON.parse(localStorage.getItem('globalSavedCategories') || '[]'));
+        let categoryCurrentVideo = null;
 
         const mainContainer = document.querySelector('.main-container');
         const showDatesCheckbox = document.getElementById('show-dates-checkbox');
@@ -943,6 +978,77 @@
             editorScrubber.style.left = (p * 100) + '%';
         }
 
+        function renderCategories() {
+            categoriesList.innerHTML = '';
+            const projCats = projectCategories.get(categoryCurrentVideo.projectPath) || new Set();
+            const videoCats = videoCategories.get(categoryCurrentVideo.projectPath + '|' + categoryCurrentVideo.videoName) || new Set();
+
+            if (projCats.size === 0) {
+                categoriesList.innerHTML = '<div style="color: #888;">No categories yet.</div>';
+            } else {
+                Array.from(projCats).sort().forEach(cat => {
+                    const div = document.createElement('div');
+                    div.style.display = 'flex';
+                    div.style.alignItems = 'center';
+                    div.style.gap = '5px';
+                    div.style.padding = '2px 0';
+
+                    const cb = document.createElement('input');
+                    cb.type = 'checkbox';
+                    cb.id = `cat-cb-${cat}`;
+                    cb.checked = videoCats.has(cat);
+                    cb.onchange = () => {
+                        toggleVideoCategory(cat, cb.checked);
+                    };
+
+                    const lbl = document.createElement('label');
+                    lbl.htmlFor = `cat-cb-${cat}`;
+                    lbl.textContent = cat;
+                    lbl.style.cursor = 'pointer';
+
+                    div.appendChild(cb);
+                    div.appendChild(lbl);
+                    categoriesList.appendChild(div);
+                });
+            }
+
+            // Global categories dropdown
+            globalCategoriesDropdown.innerHTML = '<option value="">Select a saved category...</option>';
+            let hasNewGlobal = false;
+            Array.from(globalSavedCategories).sort().forEach(cat => {
+                if (!projCats.has(cat)) {
+                    const opt = document.createElement('option');
+                    opt.value = cat;
+                    opt.textContent = cat;
+                    globalCategoriesDropdown.appendChild(opt);
+                    hasNewGlobal = true;
+                }
+            });
+            globalCategoriesContainer.style.display = hasNewGlobal ? 'flex' : 'none';
+        }
+
+        function toggleVideoCategory(catName, isAdded) {
+            const key = categoryCurrentVideo.projectPath + '|' + categoryCurrentVideo.videoName;
+            if (!videoCategories.has(key)) videoCategories.set(key, new Set());
+            const cats = videoCategories.get(key);
+            if (isAdded) {
+                cats.add(catName);
+                if (!projectCategories.has(categoryCurrentVideo.projectPath)) projectCategories.set(categoryCurrentVideo.projectPath, new Set());
+                projectCategories.get(categoryCurrentVideo.projectPath).add(catName);
+                globalSavedCategories.add(catName);
+                localStorage.setItem('globalSavedCategories', JSON.stringify(Array.from(globalSavedCategories)));
+            } else {
+                cats.delete(catName);
+            }
+        }
+
+        function openCategoriesModal(videoName, projectPath, subfolder, projectName) {
+            categoryCurrentVideo = { videoName, projectPath, subfolder, projectName };
+            newCategoryInput.value = '';
+            renderCategories();
+            categoriesModal.style.display = 'flex';
+        }
+
         async function openVideoEditor(videoName, projectPath, subfolder, projectName) {
             const key = projectPath + '|' + videoName;
             editorCurrentVideo = { videoName, projectPath, subfolder, projectName };
@@ -991,6 +1097,27 @@
         }
 
         function init() {
+            closeCategoriesModal.onclick = () => {
+                categoriesModal.style.display = 'none';
+            };
+
+            addCategoryBtn.onclick = () => {
+                const catName = newCategoryInput.value.trim();
+                if (catName) {
+                    toggleVideoCategory(catName, true);
+                    newCategoryInput.value = '';
+                    renderCategories();
+                }
+            };
+
+            addGlobalCategoryBtn.onclick = () => {
+                const catName = globalCategoriesDropdown.value;
+                if (catName) {
+                    toggleVideoCategory(catName, true);
+                    renderCategories();
+                }
+            };
+
             closeEditorModal.addEventListener('click', () => {
                 editorModal.style.display = 'none';
                 editorMainVideo.pause();
@@ -1690,6 +1817,16 @@
             };
             leftGroup.appendChild(editBtn);
 
+            const catBtn = document.createElement('button');
+            catBtn.className = 'bar-button row-bar-btn';
+            catBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>';
+            catBtn.title = 'Categories';
+            catBtn.onclick = (e) => {
+                e.stopPropagation();
+                openCategoriesModal(videoName, projectPath, subfolder, projectName);
+            };
+            leftGroup.appendChild(catBtn);
+
             bar.appendChild(leftGroup);
 
             const rightGroup = document.createElement('div');
@@ -2077,6 +2214,25 @@
                 '    }',
                 '}',
                 '',
+                'function Update-CategoryData {',
+                '    param([string]\$filePath, [hashtable]\$categories)',
+                '    if (\$categories.Count -eq 0) {',
+                '        if (Test-Path -LiteralPath "\$filePath") { Remove-Item -LiteralPath "\$filePath" }',
+                '    } else {',
+                '        \$content = @()',
+                '        foreach (\$key in \$categories.Keys) {',
+                '            if (\$categories[\$key]) {',
+                '                \$content += ("{0}:{1}" -f \$key, \$categories[\$key])',
+                '            }',
+                '        }',
+                '        if (\$content.Count -gt 0) {',
+                '            \$content | Out-File -LiteralPath "\$filePath" -Encoding utf8',
+                '        } elseif (Test-Path -LiteralPath "\$filePath") {',
+                '            Remove-Item -LiteralPath "\$filePath"',
+                '        }',
+                '    }',
+                '}',
+                '',
                 'function Manage-Shortcut {',
                 '    param([string]\$folderPath, [string]\$videoName, [string]\$targetPath, [bool]\$shouldExist)',
                 '    if (-not \$folderPath) { return }',
@@ -2452,6 +2608,40 @@
                 }
             });
 
+            // --- Category Data ---
+            const categoryUpdates = new Map(); // projectPath -> { videoName: categoriesString }
+
+            // Ensure every project folder we've loaded gets an update (to allow for full removal)
+            allProjectFolders.forEach(proj => {
+                categoryUpdates.set(proj.path, {});
+            });
+
+            videoCategories.forEach((cats, key) => {
+                const [projectPath, videoName] = key.split('|');
+                if (cats.size > 0) {
+                    if (!categoryUpdates.has(projectPath)) categoryUpdates.set(projectPath, {});
+                    categoryUpdates.get(projectPath)[videoName] = Array.from(cats).join(',');
+                }
+            });
+
+            if (categoryUpdates.size > 0) {
+                scriptLines.push('# --- Updating Category Data ---');
+                categoryUpdates.forEach((catsMap, projectPath) => {
+                    const escapedProjectPath = escapePSString(projectPath);
+                    const projectPathVar = escapedProjectPath ? `(Join-Path -Path \"$BaseDir\" -ChildPath '${escapedProjectPath}')` : '\$BaseDir';
+                    const categoryFileVar = `(Join-Path -Path ${projectPathVar} -ChildPath 'categories.txt')`;
+
+                    scriptLines.push(`\$categories = @{`);
+                    for (const [vName, cats] of Object.entries(catsMap)) {
+                        scriptLines.push(`    '${escapePSString(vName)}' = '${escapePSString(cats)}'`);
+                    }
+                    scriptLines.push(`}`);
+                    scriptLines.push(`Update-CategoryData -filePath ${categoryFileVar} -categories \$categories`);
+                    scriptLines.push(`Write-Host "Updated categories.txt for ${escapedProjectPath || '(Root)'}"`);
+                });
+                scriptLines.push('');
+            }
+
             if (rotationUpdates.size > 0) {
                 scriptLines.push('# --- Updating Rotation Data ---');
                 rotationUpdates.forEach((update, projectPath) => {
@@ -2638,6 +2828,35 @@
             return key.trim().replace(/^[\\/"'\[\]]+|[\\/"'\[\]]+$/g, '').replace(/\\/g, '/').toLowerCase();
         }
 
+        async function getCategoriesData(projectHandle, projectPath) {
+            try {
+                const handle = await projectHandle.getFileHandle('categories.txt');
+                const file = await handle.getFile();
+                const text = await file.text();
+                text.split('\n').forEach(line => {
+                    const parts = line.trim().split(':');
+                    if (parts.length === 2) {
+                        const videoName = parts[0].trim();
+                        const cats = parts[1].split(',').map(c => c.trim()).filter(c => c);
+                        if (cats.length > 0) {
+                            const key = projectPath + '|' + videoName;
+                            if (!videoCategories.has(key)) videoCategories.set(key, new Set());
+                            const videoSet = videoCategories.get(key);
+                            if (!projectCategories.has(projectPath)) projectCategories.set(projectPath, new Set());
+                            const projectSet = projectCategories.get(projectPath);
+
+                            cats.forEach(c => {
+                                videoSet.add(c);
+                                projectSet.add(c);
+                                globalSavedCategories.add(c);
+                            });
+                        }
+                    }
+                });
+                localStorage.setItem('globalSavedCategories', JSON.stringify(Array.from(globalSavedCategories)));
+            } catch (e) {}
+        }
+
         async function getRotationData(projectHandle) {
             const rotationMap = new Map();
             try {
@@ -2782,6 +3001,8 @@
             canvases.clear();
             shortcutSelections.clear();
             initialShortcutSelections.clear();
+            videoCategories.clear();
+            projectCategories.clear();
             thumbnailContainer.innerHTML = '';
             allVideoFiles = [];
 
@@ -2950,6 +3171,7 @@
             for (const project of projectFolders) {
                 try {
                     console.log(`Processing project: ${project.name} (Path: ${project.path})`);
+                    await getCategoriesData(project.handle, project.path);
                     const projectScData = await getScDataForProject(project.handle);
                     const projectRotationData = await getRotationData(project.handle);
                     
