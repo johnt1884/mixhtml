@@ -400,32 +400,33 @@
         .dropdown-content {
             display: none;
             position: absolute;
-            background-color: #ffffff;
+            background-color: var(--toolbar-color);
             min-width: 450px;
             box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
             z-index: 3000;
             top: 100%;
             left: 0;
-            border: 1px solid #ccc;
+            border: 1px solid #444;
+            color: white;
         }
         .dropdown-content button {
-            color: black;
+            color: white;
             padding: 10px 16px;
             text-decoration: none;
             display: block;
             width: 100%;
             text-align: left;
             border: none;
-            background-color: #ffffff;
+            background-color: transparent;
             cursor: pointer;
             font-size: 14px;
             white-space: nowrap;
         }
         .dropdown-content button:nth-child(even) {
-            background-color: #f2f2f2;
+            background-color: rgba(255,255,255,0.05);
         }
         .dropdown-content button:hover {
-            background-color: #e2e2e2;
+            background-color: #166fe5;
         }
         .dropdown-content .show {
             display: block;
@@ -435,11 +436,11 @@
             align-items: center;
             justify-content: space-between;
             padding: 8px 16px;
-            color: black;
+            color: white;
             font-size: 14px;
         }
         .options-row:nth-child(even) {
-            background-color: #f2f2f2;
+            background-color: rgba(255,255,255,0.05);
         }
         .options-row label {
             cursor: pointer;
@@ -1131,8 +1132,8 @@
                 const header = document.createElement('div');
                 header.style.padding = '8px 16px';
                 header.style.fontWeight = 'bold';
-                header.style.backgroundColor = '#eee';
-                header.style.color = 'black';
+                header.style.backgroundColor = 'rgba(255,255,255,0.1)';
+                header.style.color = 'white';
                 header.textContent = title;
                 topCategoriesDropdown.appendChild(header);
 
@@ -1151,6 +1152,11 @@
                         const label = document.createElement('span');
                         label.textContent = cat;
                         label.style.fontWeight = '500';
+                        label.style.cursor = 'pointer';
+                        label.onclick = (e) => {
+                            e.stopPropagation();
+                            bulkToggleCategory(cat, true);
+                        };
                         row.appendChild(label);
 
                         const actions = document.createElement('div');
