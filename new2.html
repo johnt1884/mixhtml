@@ -112,6 +112,29 @@
             overflow: auto;
             color: black;
         }
+        details {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 5px;
+            margin-bottom: 5px;
+        }
+        summary {
+            font-weight: bold;
+            cursor: pointer;
+            padding: 5px;
+        }
+        summary:hover {
+            background-color: #f0f0f0;
+        }
+        .action-list {
+            list-style: none;
+            padding-left: 20px;
+            margin: 5px 0;
+            font-size: 13px;
+        }
+        .action-list li {
+            margin-bottom: 3px;
+        }
         .close {
             color: #606770;
             float: right;
@@ -675,8 +698,14 @@
     <div id="script-modal" class="modal">
         <div class="modal-content">
             <span class="close">&times;</span>
-            <h2>Create Shortcut PowerShell Script</h2>
-            <p>This script will create shortcuts for your selections. Right-click and "Run with PowerShell" in your main video directory.</p>
+            <h2 id="script-modal-title">Create Shortcut PowerShell Script</h2>
+
+            <div id="action-summary-container" style="margin-bottom: 20px;">
+                <h3>Action Summary</h3>
+                <div id="action-summary-content"></div>
+            </div>
+
+            <p id="script-modal-desc">This script will create shortcuts for your selections. Right-click and "Run with PowerShell" in your main video directory.</p>
             <textarea id="batch-script" rows="10" cols="80" readonly></textarea>
             <button id="copy-script-btn">Copy to Clipboard</button>
             <a id="download-script-link" download="create_shortcuts.ps1">
@@ -807,6 +836,7 @@
         let editorCurrentAppliedRotation = 0;
 
         let videoCategories = new Map(); // Key: projectPath + '|' + videoName, Value: Set of category names
+        let initialVideoCategories = new Map(); // Key: projectPath + '|' + videoName, Value: Set of category names
         let projectCategories = new Map(); // Key: projectPath, Value: Set of category names
         let globalSavedCategories = new Set(JSON.parse(localStorage.getItem('globalSavedCategories') || '[]'));
         let categoryCurrentVideo = null;
@@ -2029,11 +2059,77 @@
             const hasDummyTimestamp = dummyTimestampProjects.size > 0;
             const hasMoves = selectionsToProcess.some(sel => sel.targetProject);
 
-            return hasSelections || hasDeletions || hasModifiedType || hasModifiedRotation || hasDummyTimestamp || hasEditsGlobal || hasMoves;
+            // Check for category changes
+            const allCatKeys = new Set([...videoCategories.keys(), ...initialVideoCategories.keys()]);
+            let hasCatChanges = false;
+            for (let key of allCatKeys) {
+                const current = videoCategories.get(key) || new Set();
+                const initial = initialVideoCategories.get(key) || new Set();
+                if (current.size !== initial.size) {
+                    hasCatChanges = true;
+                    break;
+                }
+                for (let cat of current) {
+                    if (!initial.has(cat)) {
+                        hasCatChanges = true;
+                        break;
+                    }
+                }
+                if (hasCatChanges) break;
+            }
+
+            return hasSelections || hasDeletions || hasModifiedType || hasModifiedRotation || hasDummyTimestamp || hasEditsGlobal || hasMoves || hasCatChanges;
+        }
+
+        function renderActionSummary(actions) {
+            const container = document.getElementById('action-summary-content');
+            container.innerHTML = '';
+
+            const categories = [
+                { id: 'edits', title: 'Video Edits (Rotations, Flips, Cuts)' },
+                { id: 'shortcuts_new', title: 'New Shortcuts' },
+                { id: 'shortcuts_verify', title: 'Verify Existing Shortcuts' },
+                { id: 'shortcuts_delete', title: 'Delete Shortcuts' },
+                { id: 'moves', title: 'File Moves' },
+                { id: 'lua', title: 'LUA Script Updates (Rotations, Flips)' },
+                { id: 'categories', title: 'Category Updates' }
+            ];
+
+            categories.forEach(cat => {
+                if (actions[cat.id] && actions[cat.id].length > 0) {
+                    const details = document.createElement('details');
+                    const summary = document.createElement('summary');
+                    summary.textContent = `${cat.title} (${actions[cat.id].length})`;
+                    details.appendChild(summary);
+
+                    const ul = document.createElement('ul');
+                    ul.className = 'action-list';
+                    actions[cat.id].forEach(text => {
+                        const li = document.createElement('li');
+                        li.textContent = text;
+                        ul.appendChild(li);
+                    });
+                    details.appendChild(ul);
+                    container.appendChild(details);
+                }
+            });
+
+            if (container.innerHTML === '') {
+                container.innerHTML = '<p>No actions to perform.</p>';
+            }
         }
 
         function generateShortcutScript() {
             const selectionsToProcess = Array.from(shortcutSelections.values());
+            const summaryActions = {
+                edits: [],
+                shortcuts_new: [],
+                shortcuts_verify: [],
+                shortcuts_delete: [],
+                moves: [],
+                lua: [],
+                categories: []
+            };
 
             // Check if any selections have editor changes (cuts, rotations, flips)
             const hasEditorChanges = selectionsToProcess.some(sel => 
@@ -2298,6 +2394,7 @@
             if (fileMoves.length > 0) {
                 scriptLines.push('# --- Moving Videos and Thumbnails ---');
                 fileMoves.forEach(sel => {
+                    summaryActions.moves.push(`${sel.videoName} -> ${sel.targetProject || '(Root)'}`);
                     const escapedVideoName = escapePSString(sel.videoName);
                     const escapedTargetProjectPath = escapePSString(sel.targetProject);
                     
@@ -2429,6 +2526,13 @@
                 const isMoved = (escapedTargetProjectPath !== null && sel.targetProject !== sel.projectPath);
 
                 if (hasEdits) {
+                    let editDesc = `${sel.videoName} (`;
+                    if (sel.rotation && sel.rotation !== "0") editDesc += `Rotate ${sel.rotation}°, `;
+                    if (sel.flipped) editDesc += "H-Flip, ";
+                    if (sel.cuts && sel.cuts.length > 0) editDesc += `${sel.cuts.length} Cuts, `;
+                    editDesc = editDesc.replace(/, $/, ")").replace(/\($/, "");
+                    summaryActions.edits.push(editDesc);
+
                     scriptLines.push(`    # Processing edits for: ${sel.projectPath}\\${sel.videoName}`);
                     const projToUse = isMoved ? sel.targetProject : sel.projectPath;
                     const nameToUse = isMoved ? sel.targetProject : sel.projectName;
@@ -2482,9 +2586,25 @@
                 const wantSub = (selectionType === 'subfolder-sc' || selectionType === 'both-sc');
 
                 // Root location
+                if (wantRoot) {
+                    const initial = initialShortcutSelections.get(key);
+                    if (initial && (initial.type === 'root-sc' || initial.type === 'both-sc')) {
+                        summaryActions.shortcuts_verify.push(`${sel.videoName} in Root sc/`);
+                    } else {
+                        summaryActions.shortcuts_new.push(`${sel.videoName} in Root sc/`);
+                    }
+                }
                 scriptLines.push(`    Manage-Shortcut -folderPath \$rootScFolder -videoName '${escapedVideoName}' -targetPath \$targetPath -shouldExist ${wantRoot ? '$true' : '$false'}`);
 
                 // Subfolder location
+                if (wantSub) {
+                    const initial = initialShortcutSelections.get(key);
+                    if (initial && (initial.type === 'subfolder-sc' || initial.type === 'both-sc')) {
+                        summaryActions.shortcuts_verify.push(`${sel.videoName} in ${sel.projectPath}/sc/`);
+                    } else {
+                        summaryActions.shortcuts_new.push(`${sel.videoName} in ${tpToUse}/sc/`);
+                    }
+                }
                 const scProjToUse = isMoved ? sel.targetProject : sel.projectPath;
                 const scNameToUse = isMoved ? sel.targetProject : sel.projectName;
                 const scProjRes = getPSPathRes('\$BaseDir', scProjToUse, scNameToUse, '');
@@ -2500,6 +2620,7 @@
             if (fileDeletions.length > 0) {
                 scriptLines.push('# --- Deleting Videos and Thumbnails ---');
                 fileDeletions.forEach(sel => {
+                    summaryActions.shortcuts_delete.push(`${sel.videoName} (Permanent Delete)`);
                     const escapedVideoName = escapePSString(sel.videoName);
                     const escapedProjectPath = escapePSString(sel.projectPath);
                     const escapedSubfolder = escapePSString(sel.subfolder);
@@ -2562,6 +2683,21 @@
 
             if (deletions.length > 0) {
                 scriptLines.push('# --- Deleting Shortcuts ---');
+                initialShortcutSelections.forEach((initial, key) => {
+                    const current = shortcutSelections.get(key);
+                    const parts = key.split('|');
+                    const videoName = parts[1];
+                    const initiallyInSubfolder = initial.type === 'subfolder-sc' || initial.type === 'both-sc';
+                    const currentlyInSubfolder = current && (current.type === 'subfolder-sc' || current.type === 'both-sc');
+                    if (initiallyInSubfolder && !currentlyInSubfolder) {
+                        summaryActions.shortcuts_delete.push(`${videoName} from ${initial.projectPath}/sc/`);
+                    }
+                    const initiallyInRoot = initial.type === 'root-sc' || initial.type === 'both-sc';
+                    const currentlyInRoot = current && (current.type === 'root-sc' || current.type === 'both-sc');
+                    if (initiallyInRoot && !currentlyInRoot) {
+                        summaryActions.shortcuts_delete.push(`${videoName} from Root sc/`);
+                    }
+                });
                 scriptLines.push(...deletions);
                 scriptLines.push('');
             }
@@ -2624,6 +2760,24 @@
                 }
             });
 
+            // --- Category Action Summary ---
+            const allCategoryKeys = new Set([...videoCategories.keys(), ...initialVideoCategories.keys()]);
+            allCategoryKeys.forEach(key => {
+                const current = videoCategories.get(key) || new Set();
+                const initial = initialVideoCategories.get(key) || new Set();
+                const [proj, video] = key.split('|');
+
+                const added = Array.from(current).filter(c => !initial.has(c));
+                const removed = Array.from(initial).filter(c => !current.has(c));
+
+                if (added.length > 0 || removed.length > 0) {
+                    let msg = `${video}: `;
+                    if (added.length > 0) msg += `Added [${added.join(', ')}] `;
+                    if (removed.length > 0) msg += `Removed [${removed.join(', ')}]`;
+                    summaryActions.categories.push(msg);
+                }
+            });
+
             if (categoryUpdates.size > 0) {
                 scriptLines.push('# --- Updating Category Data ---');
                 categoryUpdates.forEach((catsMap, projectPath) => {
@@ -2669,6 +2823,7 @@
                 scriptLines.push('\$script:rotatedFiles = @{}');
                 shortcutSelections.forEach((sel, key) => {
                     if (sel.rotation && sel.rotation !== "0") {
+                        summaryActions.lua.push(`${sel.videoName}: Rotate ${sel.rotation}°`);
                         scriptLines.push(`\$script:rotatedFiles['${escapePSString(sel.videoName)}'] = ${sel.rotation}`);
                     }
                 });
@@ -2724,6 +2879,7 @@
                 scriptLines.push("\$flipLuaPath = 'C:\\Bridge\\misc\\tools\\mpv-x86_64-v3-20260418-git-4377cce\\portable_config\\scripts\\flip.lua'");
                 scriptLines.push('\$script:flippedFiles = @{}');
                 flippedFiles.forEach(sel => {
+                    summaryActions.lua.push(`${sel.videoName}: H-Flip`);
                     scriptLines.push(`\$script:flippedFiles['${escapePSString(sel.videoName)}'] = 'hflip'`);
                 });
 
@@ -2804,6 +2960,7 @@
             scriptLines.push('Write-Host "Script execution complete."');
             scriptLines.push('Read-Host -Prompt "Press Enter to exit"');
 
+            renderActionSummary(summaryActions);
             const scriptStr = scriptLines.join('\r\n');
             batchScriptTextArea.value = scriptStr;
             const blob = new Blob(['\ufeff', scriptStr], { type: 'application/octet-stream' });
@@ -2850,6 +3007,7 @@
                                 projectSet.add(c);
                                 globalSavedCategories.add(c);
                             });
+                            initialVideoCategories.set(key, new Set(cats));
                         }
                     }
                 });
@@ -3002,6 +3160,7 @@
             shortcutSelections.clear();
             initialShortcutSelections.clear();
             videoCategories.clear();
+            initialVideoCategories.clear();
             projectCategories.clear();
             thumbnailContainer.innerHTML = '';
             allVideoFiles = [];
@@ -3958,6 +4117,15 @@
 
         function generatePlaylistScript() {
             const isPlaylistRootMode = (currentMode === 'playlist-root' || currentMode === 'update-playlist-root');
+            const summaryActions = {
+                edits: [],
+                shortcuts_new: [],
+                shortcuts_verify: [],
+                shortcuts_delete: [],
+                moves: [],
+                lua: [],
+                categories: []
+            };
 
             let scriptLines = [
                 'if (\$PSScriptRoot) { \$BaseDir = \$PSScriptRoot }',
@@ -4075,10 +4243,12 @@
                     const rotation = sel.rotation || "0";
 
                     if (currentMode === 'update-playlist-root') {
+                        summaryActions.shortcuts_verify.push(`${sel.videoName} (for Playlist)`);
                         scriptLines.push(`\$targetPath = [System.IO.Path]::GetFullPath((Join-Path -Path \"$rootScFolder\" -ChildPath ('${escapedVideoName}' + '.lnk')))`);
                         scriptLines.push(`Add-PlaylistEntry -path \$targetPath -rotation '${rotation}' -multiplier ${multiplier} -rotationKey '${escapedVideoName}'`);
                         scriptLines.push(`Write-Host "Added to playlist (shortcut): ${escapedVideoName} (${multiplier}x)"`);
                     } else {
+                        summaryActions.shortcuts_verify.push(`${sel.videoName} (for Playlist)`);
                         let targetPathConstruction = '\$BaseDir';
                         if (sel.projectPath) {
                             targetPathConstruction = `(Join-Path -Path ${targetPathConstruction} -ChildPath '${escapedProjectPath}')`;
@@ -4210,11 +4380,15 @@
             scriptLines.push('Write-Host "Total items in playlist: \$(\$script:playlistContent.Count - 1)"');
             scriptLines.push('Read-Host -Prompt "Press Enter to exit"');
 
+            renderActionSummary(summaryActions);
             const scriptStrP = scriptLines.join('\r\n');
             batchScriptTextArea.value = scriptStrP;
             const blobP = new Blob(['\ufeff', scriptStrP], { type: 'application/octet-stream' });
             downloadScriptLink.href = URL.createObjectURL(blobP);
             downloadScriptLink.download = 'create_playlist.ps1';
+
+            document.getElementById('script-modal-title').textContent = "Create Playlist PowerShell Script";
+            document.getElementById('script-modal-desc').textContent = "This script will create a playlist and update rotations. Run it in your main video directory.";
         }
 
 
