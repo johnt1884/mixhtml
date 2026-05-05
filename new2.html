@@ -7,6 +7,7 @@
      <style>
         :root {
             --bg-color: #3d0021;
+            --top-bar-color: #1c1c1c;
             --toolbar-color: #1c1c1c;
             --root-sc-color: #ffe11f;
             --subfolder-sc-color: #00ff1e;
@@ -46,7 +47,7 @@
             justify-content: space-between;
             height: 36px;
             box-sizing: border-box;
-            background-color: var(--toolbar-color);
+            background-color: var(--top-bar-color);
         }
         .top-bar-left {
             display: flex;
@@ -552,7 +553,7 @@
                             <button id="update-playlist-root-load-btn">Update playlist root</button>
                         </div>
                     </div>
-                    <div id="top-categories-menu-container" style="position: relative; margin-right: 10px; display: none;">
+                    <div id="top-categories-menu-container" style="position: relative; margin-right: 10px;">
                         <button id="top-categories-menu-btn" title="Categories" class="bar-button" style="padding: 0 8px; display: flex; align-items: center; justify-content: center;">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: white;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>
                         </button>
@@ -573,7 +574,11 @@
                                 <input type="color" id="bg-color-picker" value="#3d0021">
                             </div>
                             <div class="options-row">
-                                <label for="toolbar-color-picker">Toolbars</label>
+                                <label for="top-bar-color-picker">Top Toolbar</label>
+                                <input type="color" id="top-bar-color-picker" value="#1c1c1c">
+                            </div>
+                            <div class="options-row">
+                                <label for="toolbar-color-picker">Row Toolbars</label>
                                 <input type="color" id="toolbar-color-picker" value="#1c1c1c">
                             </div>
                             <div class="options-row">
@@ -1123,10 +1128,9 @@
 
         function updateTopCategoriesMenu() {
             topCategoriesDropdown.innerHTML = '';
-            if (!canvases.has(activeCanvasId)) return;
-            const canvas = canvases.get(activeCanvasId);
-            const projectPath = canvas.path;
-            const projCats = projectCategories.get(projectPath) || new Set();
+            const canvas = canvases.has(activeCanvasId) ? canvases.get(activeCanvasId) : null;
+            const projectPath = canvas ? canvas.path : null;
+            const projCats = projectPath ? (projectCategories.get(projectPath) || new Set()) : new Set();
 
             const createSection = (title, cats, isSaved = false) => {
                 const header = document.createElement('div');
@@ -1168,6 +1172,10 @@
                         addBtn.textContent = 'Add All';
                         addBtn.onclick = (e) => {
                             e.stopPropagation();
+                            if (!projectPath) {
+                                alert("Please load a directory first.");
+                                return;
+                            }
                             bulkToggleCategory(cat, true);
                         };
                         actions.appendChild(addBtn);
@@ -1178,6 +1186,10 @@
                         remBtn.textContent = 'Remove All';
                         remBtn.onclick = (e) => {
                             e.stopPropagation();
+                            if (!projectPath) {
+                                alert("Please load a directory first.");
+                                return;
+                            }
                             bulkToggleCategory(cat, false);
                         };
                         actions.appendChild(remBtn);
@@ -1413,6 +1425,7 @@
 
             const colorPickers = {
                 'bg-color': document.getElementById('bg-color-picker'),
+                'top-bar-color': document.getElementById('top-bar-color-picker'),
                 'toolbar-color': document.getElementById('toolbar-color-picker'),
                 'root-sc-color': document.getElementById('root-sc-color-picker'),
                 'subfolder-sc-color': document.getElementById('subfolder-sc-color-picker'),
@@ -1453,6 +1466,7 @@
                 revertDefaultsBtn.addEventListener('click', () => {
                     const defaults = {
                         'bg-color': '#3d0021',
+                        'top-bar-color': '#1c1c1c',
                         'toolbar-color': '#1c1c1c',
                         'root-sc-color': '#ffe11f',
                         'subfolder-sc-color': '#00ff1e',
